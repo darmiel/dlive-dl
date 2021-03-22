@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"bytes"
@@ -27,12 +27,38 @@ func init() {
 	}
 }
 
-func cmdDownload(context *cli.Context) error {
-	url := context.String("url")
-	log.Println("☁️ Parsing:", url)
+type DownloadRequest struct {
+	URL             string
+	OutFile         string
+	Variant         string
+	HideProgressBar bool
+}
+
+func Download(context *cli.Context) error {
+	r := &DownloadRequest{}
+
+	r.URL = context.String("url")
+	r.OutFile = context.String("out-file")
+	r.Variant = context.String("variant")
+	r.HideProgressBar = context.Bool("no-progress-bar")
+
+	// ask for url
+	if r.URL == "" {
+		q := &survey.Input{
+			Message: "URL of Video",
+		}
+		if err := survey.AskOne(q, &r.URL); err != nil {
+			return err
+		}
+	}
+	if r.URL == "" {
+		return errors.New("empty url")
+	}
+
+	log.Println("☁️ Parsing:", r.URL)
 
 	// make request
-	resp, err := http.Get(url)
+	resp, err := http.Get(r.URL)
 	if err != nil {
 		return err
 	}
@@ -57,10 +83,10 @@ func cmdDownload(context *cli.Context) error {
 		return errors.New("playback not found")
 	}
 
-	return dlM3u8AndAskForPlaylist(u)
+	return r.dlM3u8AndAskForPlaylist(u)
 }
 
-func dlM3u8AndAskForPlaylist(url string) (err error) {
+func (r *DownloadRequest) dlM3u8AndAskForPlaylist(url string) (err error) {
 	url, err = strconv.Unquote("\"" + url + "\"")
 	if err != nil {
 		return
@@ -88,16 +114,18 @@ func dlM3u8AndAskForPlaylist(url string) (err error) {
 		optVal[elems] = v
 		opts = append(opts, elems)
 	}
-	q := &survey.Select{
-		Message: "Select Variant:",
-		Options: opts,
-	}
-	var variantName string
-	if err = survey.AskOne(q, &variantName); err != nil {
-		return
+
+	if r.Variant == "" {
+		q := &survey.Select{
+			Message: "Select Variant:",
+			Options: opts,
+		}
+		if err = survey.AskOne(q, &r.Variant); err != nil {
+			return
+		}
 	}
 
-	variant, ok := optVal[variantName]
+	variant, ok := optVal[r.Variant]
 	if !ok || variant == nil {
 		return errors.New("unknown variant selected")
 	}
@@ -107,10 +135,10 @@ func dlM3u8AndAskForPlaylist(url string) (err error) {
 
 	plURI := variant.URI
 
-	return dlM3u8Playlist(plURI)
+	return r.dlM3u8Playlist(plURI)
 }
 
-func dlM3u8Playlist(url string) (err error) {
+func (r *DownloadRequest) dlM3u8Playlist(url string) (err error) {
 	log.Println("☁️ Parsing playlist from:", url)
 
 	// read url
@@ -138,73 +166,77 @@ func dlM3u8Playlist(url string) (err error) {
 	}
 
 	log.Println("  🚀 Parsed", len(segments), "to download.")
-	return dlM3u8Segments(segments)
+	return r.dlM3u8Segments(segments)
 }
 
-func dlM3u8Segments(segments []string) (err error) {
+func (r *DownloadRequest) dlM3u8Segments(segments []string) (err error) {
 	// ask for download location
-	var file string
 	var f *os.File
 
 	for {
-		prompt := &survey.Input{
-			Message: "Output File:",
-			Suggest: func(toComplete string) []string {
-				files, _ := filepath.Glob(toComplete + "*")
-				return files
-			},
+		if r.OutFile == "" {
+			prompt := &survey.Input{
+				Message: "Output File:",
+				Suggest: func(toComplete string) []string {
+					files, _ := filepath.Glob(toComplete + "*")
+					return files
+				},
+			}
+			if err = survey.AskOne(prompt, &r.OutFile); err != nil {
+				return
+			}
+			if !strings.HasSuffix(r.OutFile, ".ts") {
+				r.OutFile += ".ts"
+			}
 		}
-		if err = survey.AskOne(prompt, &file); err != nil {
-			return
-		}
-		if !strings.HasSuffix(file, ".ts") {
-			file = file + ".ts"
-		}
-
-		log.Println("☁️ Downloading to:", file)
-
-		if _, err := os.Stat(file); os.IsExist(err) {
+		if _, err := os.Stat(r.OutFile); os.IsExist(err) {
 			log.Println("🤬 File already exists")
 			continue
 		}
 
-		if f, err = os.Create(file); err != nil {
+		if f, err = os.Create(r.OutFile); err != nil {
 			log.Println("🤬 Error creating file:", err)
 			continue
 		}
-
 		break
 	}
 
-	log.Println("☁️ Downloading", len(segments), "segments ...")
-	fmt.Println()
+	log.Println("☁️ Downloading", len(segments), "segments to:", r.OutFile)
 
-	bar := progressbar.Default(int64(len(segments)))
+	var bar *progressbar.ProgressBar
+	if !r.HideProgressBar {
+		bar = progressbar.Default(int64(len(segments)))
+	}
+
 	errno := 0
 
-	for _, seg := range segments {
-		if err := bar.Add(1); err != nil {
-			log.Println("error updating progressbar:", err)
+	for idx, seg := range segments {
+		if bar != nil {
+			if err := bar.Add(1); err != nil {
+				log.Println("error updating progressbar:", err)
+			}
+		} else {
+			fmt.Print("🌨 Downloading segment #", idx, " ...")
 		}
 
 		res, err := http.Get(seg)
 		if err != nil {
 			errno++
-			fmt.Println(" ERROR: ", err)
+			fmt.Println(" ERRORED (Get): ", err)
 			continue
 		}
 
 		var buff bytes.Buffer
 		if _, err := buff.ReadFrom(res.Body); err != nil {
 			errno++
-			fmt.Println(" ERROR: ", err)
+			fmt.Println(" ERRORED (Read): ", err)
 			res.Body.Close()
 			continue
 		}
 
 		if _, err := f.Write(buff.Bytes()); err != nil {
 			errno++
-			fmt.Println(" ERROR: ", err)
+			fmt.Println(" ERRORED (Write): ", err)
 			res.Body.Close()
 			continue
 		}
@@ -216,8 +248,7 @@ func dlM3u8Segments(segments []string) (err error) {
 		log.Println("ERROR closing file:", err)
 	}
 
-	fmt.Println()
-	log.Println("☁️ All segments downloaded!", errno, "errors encountered.")
+	log.Println("☁️ All segments downloaded! 😄", "|", errno, "errors encountered.")
 
 	return nil
 }
