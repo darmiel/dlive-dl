@@ -29,7 +29,16 @@ jobs:
       - name: Build
         run: go build -v ./cmd/dlive-dl
 
-      - uses: actions/upload-artifact@v2
+      - name: Upload Artifact (Unix)
+        uses: actions/upload-artifact@v2
+        if: "matrix.os != 'windows'"
         with:
           name: dlive-dl-${{ matrix.os }}
           path: ./dlive-dl
+
+      - name: Upload Artifact (Windows)
+        uses: actions/upload-artifact@v2
+        if: "matrix.os == 'windows'"
+        with:
+          name: dlive-dl-${{ matrix.os }}
+          path: dlive-dl.exe

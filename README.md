@@ -1,3 +1,4 @@
+[![Build](https://github.com/darmiel/dlive-dl/actions/workflows/build.yml/badge.svg)](https://github.com/darmiel/dlive-dl/actions/workflows/build.yml)
 # dlive-dl
 Simple DLive Downloader
 
