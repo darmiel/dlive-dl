@@ -9,3 +9,13 @@ $ dlive-dl dl [-u <url>] [-f video.ts]
 ```bash
 $ dlive-dl dl -u https://dlive.tv/p/abcdefg+YVjyuzwGL
 ```
+
+## Build
+```bash
+$ go build ./cmd/dlive-dl
+```
+
+## Install
+```bash
+$ go install ./cmd/dlive-dl
+```
